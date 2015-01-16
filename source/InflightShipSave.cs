@@ -30,24 +30,36 @@ namespace ClawKSP
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class InflightShipSave : MonoBehaviour
     {
-        //private string Binding;
+        private KeyCode BoundKey = KeyCode.F6;
 
         public void Start ()
         {
             Debug.Log("InflightShipSave.Start()");
 
-            //ConfigNode CNBinding = new ConfigNode("Game");
-            //CNBinding = GameDatabase.Instance.GetConfigNode("INFLIGHT_SHIP_SAVE");
+            if (null == GameDatabase.Instance.GetConfigNodes("INFLIGHT_SHIP_SAVE")) { return; }
 
-            //Binding = CNBinding.GetValue("primary");
-            //Binding = (GameDatabase.Instance.GetConfigNode("INFLIGHT_SHIP_SAVE")).GetValue("primary");
+            ConfigNode CNBinding = new ConfigNode();
+            CNBinding = GameDatabase.Instance.GetConfigNodes("INFLIGHT_SHIP_SAVE")[0];
+
+            if (null != CNBinding)
+            {
+                string BindingString = CNBinding.GetValue("primary");
+                if (!string.IsNullOrEmpty(BindingString))
+                {
+                    KeyCode BoundKey = (KeyCode)System.Enum.Parse(typeof(KeyCode), BindingString);
+                    if (KeyCode.None == BoundKey)
+                    {
+                        BoundKey = KeyCode.F6;
+                    }
+                }
+            }
         }
 
         public void Update ()
         {
             // Debug.LogWarning("InflightShipSave.Update()");
 
-            if (Input.GetKeyDown(KeyCode.F6))
+            if (Input.GetKeyDown(BoundKey))
             {
                 Vessel VesselToSave = FlightGlobals.ActiveVessel;
                 string ShipName = VesselToSave.vesselName;
@@ -64,7 +76,7 @@ namespace ClawKSP
 
                 ConfigNode CN = new ConfigNode("ShipConstruct");
                 CN = ConstructToSave.SaveShip();
-                CleanNodes(CN);
+                CleanEditorNodes(CN);
 
                 VesselToSave.SetRotation(OriginalRotation);
                 VesselToSave.SetPosition(OriginalPosition);
@@ -85,27 +97,91 @@ namespace ClawKSP
                     CN.Save(UrlDir.ApplicationRootPath + "saves/" + HighLogic.SaveFolder
                         + "/Ships/VAB/" + ShipName + "_Rescued.craft");
                 }
-            }
-            
+            }     
         }
 
-        private void CleanNodes (ConfigNode CN)
+        private void CleanEditorNodes (ConfigNode CN)
         {
-            if (null == CN) { return; }
 
             CN.SetValue("EngineIgnited", "False");
             CN.SetValue("currentThrottle", "0");
             CN.SetValue("Staged", "False");
             CN.SetValue("sensorActive", "False");
-            CN.SetValue("active", "False");
             CN.SetValue("throttle", "0");
             CN.SetValue("generatorIsActive", "False");
+            CN.SetValue("persistentState", "STOWED");
 
-            for(int IndexNodes = 0; IndexNodes < CN.nodes.Count; IndexNodes++)
+            string ModuleName = CN.GetValue("name");
+
+            // Turn off or remove specific things
+            if ("ModuleScienceExperiment" == ModuleName)
             {
-                CleanNodes(CN.nodes[IndexNodes]);
+                CN.RemoveNodes("ScienceData");
+            }
+            else if ("ModuleScienceExperiment" == ModuleName)
+            {
+                CN.SetValue("Inoperable", "False");
+                CN.RemoveNodes("ScienceData");
+            }
+            else if ("Log" == ModuleName)
+            {
+                CN.ClearValues();
+            }
+
+
+            for (int IndexNodes = 0; IndexNodes < CN.nodes.Count; IndexNodes++)
+            {
+                CleanEditorNodes (CN.nodes[IndexNodes]);
             }
         }
+
+        private void PristineNodes (ConfigNode CN)
+        {
+            if (null == CN) { return; }
+
+            if ("PART" == CN.name)
+            {
+                string PartName = ((CN.GetValue("part")).Split('_'))[0];
+
+                Debug.LogWarning("PART: " + PartName);
+                
+                Part NewPart = PartLoader.getPartInfoByName(PartName).partPrefab;
+                ConfigNode NewPartCN = new ConfigNode();
+                Debug.LogWarning("New Part: " + NewPart.name);
+
+                NewPart.InitializeModules();
+
+                CN.ClearNodes();
+
+                // EVENTS, ACTIONS, PARTDATA, MODULE, RESOURCE
+
+                Debug.LogWarning("EVENTS");
+                NewPart.Events.OnSave(CN.AddNode("EVENTS"));
+                Debug.LogWarning("ACTIONS");
+                NewPart.Actions.OnSave(CN.AddNode("ACTIONS"));
+                Debug.LogWarning("PARTDATA");
+                NewPart.OnSave(CN.AddNode("PARTDATA"));
+                Debug.LogWarning("MODULE");
+                for (int IndexModules = 0; IndexModules < NewPart.Modules.Count; IndexModules++)
+                {
+                    NewPart.Modules[IndexModules].Save(CN.AddNode("MODULE"));
+                }
+                Debug.LogWarning("RESOURCE");
+                for (int IndexResources = 0; IndexResources < NewPart.Resources.Count; IndexResources++)
+                {
+                    NewPart.Resources[IndexResources].Save(CN.AddNode("RESOURCE"));
+                }
+
+                //CN.AddNode(CompiledNodes);
+
+                return;
+            }
+            for (int IndexNodes = 0; IndexNodes < CN.nodes.Count; IndexNodes++)
+            {
+                PristineNodes(CN.nodes[IndexNodes]);
+            }
+        }
+
         public void OnDestroy ()
         {
             Debug.Log("InflightShipSave.OnDestroy()");
